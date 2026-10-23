@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 냉장고 사진에서 식재료를 인식(이미지 모델)하고 레시피를 추천(텍스트 모델)하는 Streamlit 웹 앱. AI 모델은 OpenRouter 무료 모델을 쓴다. 사용자에게 보이는 답변과 보고는 한국어로 작성한다.
 
-앱 요구사항은 `docs/PRD_step1.md`(사진에서 식재료 인식) → `docs/PRD_step2.md`(레시피 생성) → `docs/PRD_step3.md`(프로필과 레시피 저장) 순서로 구현한다. 1단계까지 구현했다. 화면은 Streamlit, 배포처는 Streamlit Community Cloud로 정했다.
+앱 요구사항은 `docs/PRD_step1.md`(사진에서 식재료 인식) → `docs/PRD_step2.md`(레시피 생성) → `docs/PRD_step3.md`(프로필과 레시피 저장) 순서로 구현한다. 2단계까지 구현했다. 화면은 Streamlit, 배포처는 Streamlit Community Cloud로 정했다.
 
 ## 명령어
 
@@ -26,7 +26,8 @@ Windows 콘솔/Git Bash에서 한글이 깨지면 `PYTHONUTF8=1`을 붙여 실�
 앱 코드 (`src/`, 앱 파일끼리는 같은 폴더 기준으로 import):
 - `ai_client.py`: 모든 AI 호출이 거치는 공용 모듈. `chat_with_fallback(models, messages, parse)`가 모델 목록을 차례로 시도하고, `parse`가 성공한 첫 결과를 `AiResult(data, model, attempts)`로 돌려준다. `parse`는 쓸 수 없는 답이면 `ValueError`를 내야 한다(그러면 같은 모델로 한 번 더, 이후 다음 모델). 모델당 2회 시도, 401은 `ApiKeyError`로 즉시 중단, 400/402/403은 바로 다음 모델, 전부 실패하면 `AllModelsFailedError(attempts)`. `extract_json()`은 코드 블록이나 앞뒤 설명이 붙은 답에서 JSON을 꺼낸다. 2단계(레시피)도 이 모듈을 쓴다.
 - `vision.py`: 1단계. `VISION_MODELS`(우선순위 목록), 사진 축소(긴 변 1568px, EXIF 회전 반영, JPEG data URL), 프롬프트, 응답 검증(`CATEGORIES` 밖의 분류는 "기타"), 같은 이름(공백 무시) 식재료 합치기.
-- `app.py`: Streamlit 화면. 사진과 인식 결과를 같은 화면 두 칸에 보여 주고, 결과는 `st.data_editor`로 수정, 추가, 삭제한다. 상태는 `st.session_state`에 둔다: `recognized`(모델 결과, 편집표의 처음 값)와 `ingredients`(사용자가 확정한 목록, 2단계의 입력)를 구분한다. 다시 인식할 때마다 `run_count`로 편집표 key를 바꿔 이전 편집 상태를 버린다.
+- `recipe.py`: 2단계. `RECIPE_MODELS`, 추천 조건 선택지(`CUISINES`, `TIME_LIMITS`, `DIFFICULTIES`, `SERVINGS`), 프롬프트, 응답 검증. 필수 항목(title, used_ingredients, steps)이 빠진 레시피와 시간 조건을 넘긴 레시피는 버리고, 남는 게 없으면 `ValueError`로 재요청한다. 모델이 "가진 재료"로 적었지만 확정 목록에 없는 재료는 `reconcile()`이 "부족한 재료"로 옮긴다(이름 부분 일치). 조리 순서가 `{"name": "..."}` 같은 객체로 오는 경우가 있어 `_clean_steps()`가 문자열로 맞춘다.
+- `app.py`: Streamlit 한 페이지. 위쪽은 1단계(사진 | 인식 결과 `st.data_editor`), 아래쪽은 2단계(추천 조건 | 레시피 카드)로 화면 전환 없이 이어진다. 상태는 `st.session_state`에 둔다: `recognized`(모델 결과, 편집표의 처음 값)와 `ingredients`(사용자가 확정한 목록, 2단계의 입력)를 구분한다. 다시 인식할 때마다 `run_count`로 편집표 key를 바꿔 이전 편집 상태를 버린다. 다시 인식하면 레시피도 지운다(`reset_results` → `reset_recipes`). `recipe_basis`에 레시피를 만들 때의 식재료와 조건을 저장해 두고, 지금 값과 다르면 "다시 추천" 안내를 보여 준다. AI 호출은 버튼 `on_click`이 `running`/`recipe_running` 플래그만 세우고, 다음 실행에서 spinner 안에서 호출한 뒤 `st.rerun()`한다(호출 중 버튼 비활성화).
 
 연결 시험 스크립트 (`src/`, 앱과 독립):
 - `src/openrouter_chat.py`: 공통 기반. `get_api_key()`가 `load_dotenv()`로 `.env`를 읽어 `OPENROUTER_API_KEY`를 반환하고, `API_URL`(chat/completions)을 정의한다. 다른 스크립트는 여기서 이 둘을 import해 쓴다.
@@ -55,7 +56,8 @@ Windows 콘솔/Git Bash에서 한글이 깨지면 `PYTHONUTF8=1`을 붙여 실�
 - 공급자 쪽 일시 오류(429, 404, 5xx)가 잦다. 앱은 `ai_client.py`가 처리하고, 시험 스크립트 `test_models.py`의 `call()`은 10/30/60초 간격으로 따로 재시도한다.
 - **HTTP 200이어도 본문에 `choices` 없이 `error`만 오는 경우가 있다.** 상태 코드만 보지 말고 `choices` 존재 여부로 성공을 판단한다.
 - 응답이 2분 가까이 걸리는 경우가 있어 요청 timeout은 180초로 둔다.
-- 텍스트 모델은 지시가 없으면 영어로 답하기 쉬우므로, 프롬프트에 "한국어로"를 명시한다.
+- 텍스트 모델은 지시가 없으면 영어로 답하기 쉬우므로, 프롬프트에 "한국어로"를 명시한다. 그래도 "thinly", "取出" 같은 외국어가 섞이는 경우가 있다.
+- 레시피 생성은 1~2분 걸린다(2026-10-23 측정 73초, 약 2분). 브라우저 시험에서는 넉넉히 기다린다.
 
 ## 비밀 정보
 
