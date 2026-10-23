@@ -7,3 +7,6 @@
 __pycache__/
 *.pyc
 .venv/
+
+# Claude Code 개인 설정 (launch.json은 공유)
+.claude/settings.local.json
